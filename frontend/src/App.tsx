@@ -27,14 +27,19 @@ function App() {
   const [taperRate, setTaperRate] = useState(0.5)
   const [taxBands, setTaxBands] = useState(defaultTaxBands)
   const [niBands, setNIBands] = useState(defaultNIBands)
-  const [totalIncome, setTotalIncome] = useState(50_000)
+  const [baseSalary, setBaseSalary] = useState(50_000)
+  const [extraComp, setExtraComp] = useState(0)
   const [sacrificeValue, setSacrificeValue] = useState(0)
   const [sacrificeMode, setSacrificeMode] = useState<SacrificeMode>('yearly')
+
+  const totalIncome = baseSalary + extraComp
 
   const salarySacrifice =
     sacrificeMode === 'yearly' ? sacrificeValue
     : sacrificeMode === 'monthly' ? sacrificeValue * 12
-    : totalIncome * (sacrificeValue / 100)
+    : baseSalary * (sacrificeValue / 100)
+
+  const sacrificePctOfBase = baseSalary > 0 ? (salarySacrifice / baseSalary) * 100 : 0
 
   const updateTaxBand = (i: number, field: 'width' | 'rate', value: string) => {
     const next = [...taxBands]
@@ -107,8 +112,13 @@ function App() {
         <section className="bg-white rounded-xl shadow p-5 space-y-4">
           <h2 className="text-lg font-semibold text-gray-700">Your Details</h2>
           <label className="block">
-            <span className="text-sm text-gray-500">Total Gross Income (yearly)</span>
-            <input type="number" className="mt-1 block w-full border rounded px-3 py-2" value={totalIncome} onChange={e => setTotalIncome(+e.target.value)} />
+            <span className="text-sm text-gray-500">Base Salary (yearly)</span>
+            <input type="number" className="mt-1 block w-full border rounded px-3 py-2" value={baseSalary} onChange={e => setBaseSalary(+e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm text-gray-500">Extra Compensation (yearly)</span>
+            <input type="number" className="mt-1 block w-full border rounded px-3 py-2" value={extraComp} onChange={e => setExtraComp(+e.target.value)} />
+            {extraComp > 0 && <div className="text-xs text-gray-400 mt-1">Total comp: {fmt(totalIncome)}</div>}
           </label>
           <div>
             <div className="flex items-center gap-4 mb-2">
@@ -131,6 +141,9 @@ function App() {
             />
             {sacrificeMode !== 'yearly' && (
               <div className="text-xs text-gray-400 mt-1">= {fmt(salarySacrifice)} / year</div>
+            )}
+            {sacrificeMode !== 'percent' && salarySacrifice > 0 && (
+              <div className="text-xs text-gray-400 mt-1">{sacrificePctOfBase.toFixed(1)}% of base salary</div>
             )}
           </div>
         </section>
