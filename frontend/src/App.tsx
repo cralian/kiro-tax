@@ -1,10 +1,17 @@
 import { useState } from 'react'
 import { calculateIncomeTax, TaxBand, TaxParams } from './tax'
+import { calculateNI, NIBand, NIParams } from './ni'
 
-const defaultBands: TaxBand[] = [
-  { from: 0, to: 50_270, rate: 0.2 },
-  { from: 50_270, to: 125_140, rate: 0.4 },
-  { from: 125_140, to: null, rate: 0.45 },
+const defaultTaxBands: TaxBand[] = [
+  { width: 37_700, rate: 0.2 },
+  { width: 87_440, rate: 0.4 },
+  { width: null, rate: 0.45 },
+]
+
+const defaultNIBands: NIBand[] = [
+  { from: 0, to: 12_570, rate: 0 },
+  { from: 12_570, to: 50_270, rate: 0.08 },
+  { from: 50_270, to: null, rate: 0.02 },
 ]
 
 const fmt = (n: number) =>
@@ -18,7 +25,8 @@ function App() {
   const [personalAllowance, setPersonalAllowance] = useState(12_570)
   const [taperThreshold, setTaperThreshold] = useState(100_000)
   const [taperRate, setTaperRate] = useState(0.5)
-  const [bands, setBands] = useState(defaultBands)
+  const [taxBands, setTaxBands] = useState(defaultTaxBands)
+  const [niBands, setNIBands] = useState(defaultNIBands)
   const [totalIncome, setTotalIncome] = useState(50_000)
   const [sacrificeValue, setSacrificeValue] = useState(0)
   const [sacrificeMode, setSacrificeMode] = useState<SacrificeMode>('yearly')
@@ -28,21 +36,35 @@ function App() {
     : sacrificeMode === 'monthly' ? sacrificeValue * 12
     : totalIncome * (sacrificeValue / 100)
 
-  const updateBand = (i: number, field: keyof TaxBand, value: string) => {
-    const next = [...bands]
+  const updateTaxBand = (i: number, field: 'width' | 'rate', value: string) => {
+    const next = [...taxBands]
+    if (field === 'rate') next[i] = { ...next[i], rate: parseFloat(value) || 0 }
+    else next[i] = { ...next[i], width: value === '' ? null : parseFloat(value) || 0 }
+    setTaxBands(next)
+  }
+
+  const updateNIBand = (i: number, field: keyof NIBand, value: string) => {
+    const next = [...niBands]
     if (field === 'rate') next[i] = { ...next[i], rate: parseFloat(value) || 0 }
     else if (field === 'to') next[i] = { ...next[i], to: value === '' ? null : parseFloat(value) || 0 }
     else next[i] = { ...next[i], from: parseFloat(value) || 0 }
-    setBands(next)
+    setNIBands(next)
   }
 
-  const params: TaxParams = {
+  const taxParams: TaxParams = {
     personalAllowance,
-    bands,
+    bands: taxBands,
     allowanceTaper: { threshold: taperThreshold, rate: taperRate },
   }
+  const niParams: NIParams = { bands: niBands }
 
-  const result = calculateIncomeTax(params, totalIncome, salarySacrifice)
+  const taxResult = calculateIncomeTax(taxParams, totalIncome, salarySacrifice)
+  const niResult = calculateNI(niParams, taxResult.grossIncome)
+
+  const totalDeductions = taxResult.incomeTax + niResult.nationalInsurance
+  const netIncome = taxResult.grossIncome - totalDeductions
+  const pension = Math.max(0, Math.min(salarySacrifice, totalIncome))
+  const grandTotal = netIncome + pension
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
@@ -66,18 +88,19 @@ function App() {
               <input type="number" step="0.1" className="mt-1 block w-full border rounded px-3 py-2" value={taperRate} onChange={e => setTaperRate(+e.target.value)} />
             </label>
           </div>
+
           <div>
-            <h3 className="text-sm font-medium text-gray-600 mb-2">Tax Bands</h3>
+            <h3 className="text-sm font-medium text-gray-600 mb-2">Income Tax Bands (width / rate)</h3>
             <div className="space-y-2">
-              {bands.map((b, i) => (
-                <div key={i} className="grid grid-cols-3 gap-2">
-                  <input type="number" placeholder="From" className="border rounded px-3 py-1 text-sm" value={b.from} onChange={e => updateBand(i, 'from', e.target.value)} />
-                  <input type="number" placeholder="To (empty=∞)" className="border rounded px-3 py-1 text-sm" value={b.to ?? ''} onChange={e => updateBand(i, 'to', e.target.value)} />
-                  <input type="number" step="0.01" placeholder="Rate" className="border rounded px-3 py-1 text-sm" value={b.rate} onChange={e => updateBand(i, 'rate', e.target.value)} />
+              {taxBands.map((b, i) => (
+                <div key={i} className="grid grid-cols-2 gap-2">
+                  <input type="number" placeholder="Width (empty=∞)" className="border rounded px-3 py-1 text-sm" value={b.width ?? ''} onChange={e => updateTaxBand(i, 'width', e.target.value)} />
+                  <input type="number" step="0.01" placeholder="Rate" className="border rounded px-3 py-1 text-sm" value={b.rate} onChange={e => updateTaxBand(i, 'rate', e.target.value)} />
                 </div>
               ))}
             </div>
           </div>
+          <BandEditor label="NI Bands (from, to, rate)" bands={niBands} onUpdate={updateNIBand} />
         </section>
 
         {/* Inputs */}
@@ -115,29 +138,40 @@ function App() {
         {/* Output */}
         <section className="bg-white rounded-xl shadow p-5 space-y-4">
           <h2 className="text-lg font-semibold text-gray-700">Results</h2>
+
           <div className="flex flex-wrap gap-4">
-            <Stat label="Effective Allowance" value={fmt(result.effectiveAllowance)} />
-            <Stat label="Income Tax" value={fmt(result.incomeTax)} className="text-red-600" />
-            {result.taxSaved > 0 && <Stat label="Tax Saved" value={fmt(result.taxSaved)} className="text-amber-600" />}
-          </div>
-          <div className="flex flex-wrap gap-4">
-            <Stat label="Net Salary (yr)" value={fmt(result.netIncome)} className="text-green-700" />
-            <Stat label="Net Salary (mo)" value={fmt(result.netMonthly)} className="text-green-700" />
-          </div>
-          {result.pension > 0 && (
-            <div className="flex flex-wrap gap-4">
-              <Stat label="Pension (yr)" value={fmt(result.pension)} className="text-blue-600" />
-              <Stat label="Pension (mo)" value={fmt(result.pensionMonthly)} className="text-blue-600" />
-            </div>
-          )}
-          <div className="flex flex-wrap gap-4 border-t pt-3">
-            <Stat label="Grand Total (yr)" value={fmt(result.grandTotal)} className="text-gray-900" />
-            <Stat label="Grand Total (mo)" value={fmt(result.grandTotalMonthly)} className="text-gray-900" />
+            <Stat label="Effective Allowance" value={fmt(taxResult.effectiveAllowance)} />
+            <Stat label="Income Tax" value={fmt(taxResult.incomeTax)} className="text-red-600" />
+            <Stat label="National Insurance" value={fmt(niResult.nationalInsurance)} className="text-red-600" />
+            <Stat label="Total Deductions" value={fmt(totalDeductions)} className="text-red-700" />
           </div>
 
-          {result.breakdown.length > 0 && (
+          {taxResult.taxSaved > 0 && (
+            <div className="flex flex-wrap gap-4">
+              <Stat label="Tax Saved via Sacrifice" value={fmt(taxResult.taxSaved)} className="text-amber-600" />
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-4 border-t pt-3">
+            <Stat label="Net Salary (yr)" value={fmt(netIncome)} className="text-green-700" />
+            <Stat label="Net Salary (mo)" value={fmt(netIncome / 12)} className="text-green-700" />
+          </div>
+
+          {pension > 0 && (
+            <div className="flex flex-wrap gap-4">
+              <Stat label="Pension (yr)" value={fmt(pension)} className="text-blue-600" />
+              <Stat label="Pension (mo)" value={fmt(pension / 12)} className="text-blue-600" />
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-4 border-t pt-3">
+            <Stat label="Grand Total (yr)" value={fmt(grandTotal)} className="text-gray-900" />
+            <Stat label="Grand Total (mo)" value={fmt(grandTotal / 12)} className="text-gray-900" />
+          </div>
+
+          {taxResult.breakdown.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-gray-600 mb-2">Breakdown</h3>
+              <h3 className="text-sm font-medium text-gray-600 mb-2">Income Tax Breakdown</h3>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-gray-500 border-b">
@@ -147,7 +181,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.breakdown.map((b, i) => (
+                  {taxResult.breakdown.map((b, i) => (
                     <tr key={i} className="border-b border-gray-100">
                       <td className="py-1">{fmt(b.from)} – {fmt(b.to)}</td>
                       <td className="py-1">{pct(b.rate)}</td>
@@ -159,6 +193,27 @@ function App() {
             </div>
           )}
         </section>
+      </div>
+    </div>
+  )
+}
+
+function BandEditor({ label, bands, onUpdate }: {
+  label: string;
+  bands: { from: number; to: number | null; rate: number }[];
+  onUpdate: (i: number, field: 'from' | 'to' | 'rate', value: string) => void;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-gray-600 mb-2">{label}</h3>
+      <div className="space-y-2">
+        {bands.map((b, i) => (
+          <div key={i} className="grid grid-cols-3 gap-2">
+            <input type="number" placeholder="From" className="border rounded px-3 py-1 text-sm" value={b.from} onChange={e => onUpdate(i, 'from', e.target.value)} />
+            <input type="number" placeholder="To (empty=∞)" className="border rounded px-3 py-1 text-sm" value={b.to ?? ''} onChange={e => onUpdate(i, 'to', e.target.value)} />
+            <input type="number" step="0.01" placeholder="Rate" className="border rounded px-3 py-1 text-sm" value={b.rate} onChange={e => onUpdate(i, 'rate', e.target.value)} />
+          </div>
+        ))}
       </div>
     </div>
   )
